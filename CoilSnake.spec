@@ -7,10 +7,6 @@ import shutil
 import sys
 import sysconfig
 
-from setuptools.sandbox import run_setup
-
-run_setup('setup.py', ['build_ext'])
-
 debug = False
 
 # This logic is specific to setuptools. It may change in future versions, as it did in 62.1.0.
