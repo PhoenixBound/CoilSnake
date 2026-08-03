@@ -37,13 +37,20 @@ int main (int argc, char **argv) {
 	
 	if (argc < 4) {
 		fprintf(stderr, "To insert compressed data into a ROM:\n"
-		                "%s [-fast] infile romfile offset\n"
-						
-		                "To write compressed data to a new file:\n" 
-		                "%s [-fast] -n infile outfile\n\n"
-						
-		                "Running with the -fast switch increases compression speed at the expense of size.\n"
-		
+		                "%s [options] infile romfile offset\n"
+
+		                "To write compressed data to a new file:\n"
+		                "%s [options] -n infile outfile\n\n"
+
+		                "Compression options:\n"
+		                "-fast  avoid less common compression methods (faster compression, but larger output)\n"
+		                "-opt   perform shortest-path searching (smaller output, but slower compression)\n"
+		                "\n"
+		                "-1     fastest compression (same as -fast)\n"
+		                "-2     fast compression (default)\n"
+		                "-3     better compression (same as -fast -opt)\n"
+		                "-4     best compression (same as -opt)\n"
+
 		                "\nExample:\n%s -fast test.chr kirbybowl.sfc 0x70000\n"
 		                "%s -n test.chr test-packed.bin\n\n"
 		                "offset can be in either decimal or hex.\n",
@@ -54,18 +61,35 @@ int main (int argc, char **argv) {
 	FILE   *infile, *outfile;
 	int    fileoffset;
 	int    newfile = 0;
-	int    fast    = 0;
+	pack_options_t options;
 	
 	for (int i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "-n"))
+		if (!strcmp(argv[i], "-n")) {
 			newfile = 1;
-		else if (!strcmp(argv[i], "-fast")) 
-			fast = 1;
+		} else if (!strcmp(argv[i], "-fast")) {
+			options.fast = 1;
+		} else if (!strcmp(argv[i], "-opt")) {
+			options.optimal = 1;
+		} else if (!strcmp(argv[i], "-1")) {
+			options.fast = 1;
+			options.optimal = 0;
+		} else if (!strcmp(argv[i], "-2")) {
+			options.fast = 0;
+			options.optimal = 0;
+		} else if (!strcmp(argv[i], "-3")) {
+			options.fast = 1;
+			options.optimal = 1;
+		} else if (!strcmp(argv[i], "-4")) {
+			options.fast = 0;
+			options.optimal = 1;
+		}
 	}
 	
-	if (fast)
+	if (options.fast)
 		printf("Fast compression enabled.\n");
-		
+	if (options.optimal)
+		printf("Optimal compression (shortest path) enabled.\n");	
+	
 	// check for -n switch
 	if (newfile) {
 		fileoffset = 0;
@@ -114,7 +138,7 @@ int main (int argc, char **argv) {
 	
 	// compress the file
 	clock_t time = clock();
-	outputsize = pack(unpacked, inputsize, packed, fast);
+	outputsize = exhal_pack2(unpacked, inputsize, packed, &options);
 	time = clock() - time;
 
 	if (outputsize) {
@@ -127,7 +151,7 @@ int main (int argc, char **argv) {
 		}
 		
 		printf("Compressed size:    %lu bytes\n", (unsigned long)outputsize);
-		printf("Compression ratio:  %4.2f%%\n", 100 * (double)outputsize / inputsize);
+		printf("Compression ratio:  %4.2f:1\n", (double)inputsize / outputsize);
 		printf("Compression time:   %4.3f seconds\n\n", (double)time / CLOCKS_PER_SEC);
 		
 		printf("Inserted at 0x%06X - 0x%06lX\n", fileoffset, ftell(outfile) - 1);
