@@ -23,13 +23,13 @@ static PyObject* comp(PyObject* self, PyObject* args) {
 
 	if (size < 1)
 		return PyErr_Format(PyExc_TypeError, "got empty list");
-	else if (size > 0x10000)
+	else if (size > DATA_SIZE)
 		return PyErr_Format(PyExc_TypeError, "got very long list with %zd items (limit is 65536)", size);
 
 	// Allocate a buffer for both the uncompressed (size) and compressed (up to 65536 bytes) data.
 	// In general we can't predict the maximum size of the data after compression, except that the
 	// decompression function in-game can't cross banks. exhal is aware of this.
-	udata = (uint8_t*) malloc(65536 + size);
+	udata = (uint8_t*) malloc(DATA_SIZE + size);
 	if (!udata)
 		return PyErr_NoMemory();
 
@@ -49,10 +49,10 @@ static PyObject* comp(PyObject* self, PyObject* args) {
                         free(udata);
 			return PyErr_Format(PyExc_TypeError, "list of ints in range 0-255 expected (%ld found)", n);
                 }
-                udata[0x10000 + i] = (uint8_t) n;
+                udata[DATA_SIZE + i] = (uint8_t) n;
 	}
 
-	csize = exhal_pack2(&udata[0x10000], size, udata, &compression_options);
+	csize = exhal_pack2(&udata[DATA_SIZE], size, udata, &compression_options);
 	if (csize == 0) {
 		free(udata);
 		return PyErr_Format(PyExc_RuntimeError, "failed to compress %zd bytes of data", size);
@@ -115,8 +115,10 @@ PyObject* get_rom_bytes(PyObject* rom) {
 static PyObject* decomp(PyObject* self, PyObject* args) {
 	PyObject *rom, *ulist, *o, *romByteArr;
 	int addr;
-	size_t new_size, i;
+	size_t new_size, i, max_unpack_size;
 	uint8_t *romBuffer, *buffer;
+	const uint8_t *src;
+	Py_ssize_t romBufferSize;
 
 	if (!PyArg_ParseTuple(args, "Oi", &rom, &addr))
 		return NULL;
@@ -125,14 +127,35 @@ static PyObject* decomp(PyObject* self, PyObject* args) {
 	if (!romByteArr)
 		return NULL;
 
-	romBuffer = (uint8_t*) PyByteArray_AS_STRING(romByteArr);
+	romBuffer = (uint8_t*) PyByteArray_AsString(romByteArr);
+	romBufferSize = PyByteArray_Size(romByteArr);
+	if (addr < 0)
+		return PyErr_Format(PyExc_IndexError, "cannot decompress data at negative address %x", addr);
+	else if (addr >= romBufferSize)
+		return PyErr_Format(PyExc_IndexError, "cannot decompress data at address $%06x in ROM of size 0x%zx", addr, romBufferSize);
 
-	// Allocate a buffer
-	buffer = (uint8_t*) malloc(65536);
-	if (!buffer)
-		return PyErr_NoMemory();
+	// exhal doesn't have a "maximum number of bytes to read" argument for unpacking.
+	// You have to pass in a buffer with 64 KiB of data in it, if you're not 100% sure that it ends in an FF byte.
+	max_unpack_size = romBufferSize - addr;
+	if (max_unpack_size >= DATA_SIZE) {
+		// The ROM itself has >= 64 KiB, so we don't have to allocate as much.
+		buffer = malloc(DATA_SIZE);
+		if (!buffer)
+			return PyErr_NoMemory();
+		src = romBuffer + addr;
+	} else {
+		// The ROM doesn't have that much data, so we need to allocate it ourselves.
+		// Put it in the same heap allocation as `buffer` to simplify error handling.
+		// Fill it with 00s, matching exhal_unpack_from_file, so that exhal will get to the end of the buffer,
+		// see that there was no FF end command, and return failure.
+		buffer = calloc(2, DATA_SIZE);
+		if (!buffer)
+			return PyErr_NoMemory();
+		memcpy(&buffer[DATA_SIZE], romBuffer, max_unpack_size);
+		src = &buffer[DATA_SIZE];
+	}
 
-	new_size = exhal_unpack(romBuffer + addr, buffer, NULL);
+	new_size = exhal_unpack(src, buffer, NULL);
 	if (new_size == 0) {
 		free(buffer);
 		return PyErr_Format(PyExc_RuntimeError, "failed to decompress data at address $%06x", addr);
